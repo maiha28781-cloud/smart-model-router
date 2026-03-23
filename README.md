@@ -39,7 +39,7 @@ Create `~/.claude/smart-model-router.json` (global) or `.claude/smart-model-rout
   "tiers": [
     {
       "name": "haiku",
-      "models": ["haiku", "claude-haiku-4.5"],
+      "models": ["haiku"],
       "switch_to": "haiku",
       "priority": 1,
       "description": "Simple mechanical tasks",
@@ -82,6 +82,25 @@ Create `~/.claude/smart-model-router.json` (global) or `.claude/smart-model-rout
 }
 ```
 
+### Extend or replace default keywords/patterns per tier
+
+```json
+{
+  "opus": {
+    "mode": "extend",
+    "keywords": ["my-custom-signal"],
+    "remove_keywords": ["rethink"]
+  },
+  "haiku": {
+    "mode": "replace",
+    "patterns": ["\\bgit status\\b"]
+  }
+}
+```
+
+> `mode: extend` (default) — adds to built-in keywords/patterns, supports `remove_keywords` / `remove_patterns`  
+> `mode: replace` — discards built-ins entirely, uses only your list
+
 ## Config options
 
 | Field | Type | Default | Description |
@@ -98,11 +117,14 @@ Create `~/.claude/smart-model-router.json` (global) or `.claude/smart-model-rout
 | `models` | string[] | Substrings matched against current model |
 | `switch_to` | string | Value written to `settings.json` on autoswitch |
 | `priority` | int | Tier weight (lower = lighter). Must be unique. |
+| `mode` | `extend` \| `replace` | Whether to extend or replace default keywords/patterns |
 | `keywords` | string[] | Case-insensitive keywords matched against prompt |
+| `remove_keywords` | string[] | Remove specific defaults (extend mode only) |
 | `patterns` | string[] | Python regex patterns matched against prompt |
+| `remove_patterns` | string[] | Remove specific default patterns (extend mode only) |
 | `max_word_count` | int | Only match if prompt is shorter than this |
 | `min_word_count` | int | Only match if prompt is longer than this |
-| `force_min_word_count` | int | Force this tier if prompt exceeds N words (no keywords needed) |
+| `force_min_word_count` | int | Force this tier if prompt exceeds N words |
 | `force_question_word_count` | int | Force this tier if prompt is a long question |
 
 ## Override
@@ -113,11 +135,55 @@ Prefix any prompt with `~` to skip classification entirely:
 ~ do this with whatever model i'm on
 ```
 
+## Analytics
+
+All routing decisions are logged as structured NDJSON at `~/.claude/logs/smart-model-router.ndjson`.
+
+```bash
+# All-time summary
+bash ~/.claude/plugins/cache/maiha28781-cloud/smart-model-router/*/plugins/smart-model-router/hooks/analytics.sh
+
+# Last 7 days
+bash analytics.sh --days 7
+
+# Machine-readable JSON
+bash analytics.sh --json
+```
+
+Example output:
+```
+==================================================
+  SMART MODEL ROUTER ANALYTICS
+==================================================
+  Total prompts classified : 142
+  Blocked (wrong model)    : 38 (26.8%)
+  Allowed (correct model)  : 97 (68.3%)
+  Overridden (~)           : 7 (4.9%)
+
+  Recommendation breakdown:
+    sonnet          82  (57.7%)
+    haiku           41  (28.9%)
+    opus            19  (13.4%)
+
+  Top mismatch flows (blocked):
+    sonnet → haiku                  22x
+    sonnet → opus                   12x
+    opus → sonnet                    4x
+==================================================
+```
+
 ## Logs
 
 ```bash
-tail -f ~/.claude/logs/smart-model-router.log
+# Structured NDJSON (for scripting)
+tail -f ~/.claude/logs/smart-model-router.ndjson | python3 -m json.tool
 ```
+
+## Acknowledgements
+
+Inspired by and borrows ideas from:
+- **[tzachbon/claude-model-router-hook](https://github.com/tzachbon/claude-model-router-hook)** — plugin structure, config walk-up, extend/replace mode, safe regex
+- **[coyvalyss1/model-matchmaker](https://github.com/coyvalyss1/model-matchmaker)** — NDJSON logging, analytics dashboard, completion tracking
 
 ## License
 

@@ -1,8 +1,8 @@
 # Contributors
 
-Thank you to everyone who helped build **smart-model-router**!
+Thank you to everyone who helped build and inspire **smart-model-router**!
 
-## Human
+## Creator
 
 | Name | Role |
 |------|------|
@@ -13,6 +13,15 @@ Thank you to everyone who helped build **smart-model-router**!
 | Name | Role |
 |------|------|
 | [Claude](https://claude.ai) (Anthropic) | Co-architect, implementation, code review |
+
+## Inspirations & References
+
+This plugin was inspired by and borrows ideas from:
+
+| Author | Repo | Contributions to this project |
+|--------|------|-------------------------------|
+| [tzachbon](https://github.com/tzachbon) | [claude-model-router-hook](https://github.com/tzachbon/claude-model-router-hook) | Plugin structure, config walk-up, `mode: extend/replace`, `remove_keywords/patterns`, safe regex matching, system-prompt skip |
+| [coyvalyss1](https://github.com/coyvalyss1) | [model-matchmaker](https://github.com/coyvalyss1/model-matchmaker) | NDJSON structured logging, analytics dashboard, Stop hook for completion tracking |
 
 ---
 

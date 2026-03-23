@@ -2,6 +2,10 @@
 """
 smart-model-router — classifier for Claude Code hooks.
 
+Inspired by:
+  - tzachbon/claude-model-router-hook (config walk-up, extend/replace mode, safe_regex, system-prompt skip)
+  - coyvalyss1/model-matchmaker (NDJSON structured logging, completion tracking)
+
 Modes:
   (default)     UserPromptSubmit: reads JSON prompt from stdin, outputs systemMessage if routing mismatch
   --session     SessionStart: outputs additionalContext with tier guidance
@@ -9,11 +13,12 @@ Modes:
 import argparse
 import json
 import os
+import pathlib
 import re
 import sys
 from datetime import datetime
 
-# ─── Default tiers ─────────────────────────────────────────────────────────────
+# ─── Defaults ────────────────────────────────────────────────────────────────
 DEFAULT_TIERS = [
     {
         "name": "haiku",
@@ -66,91 +71,137 @@ DEFAULT_TIERS = [
     }
 ]
 
-LOG_PATH = os.path.expanduser("~/.claude/logs/smart-model-router.log")
+LOG_PATH = os.path.expanduser("~/.claude/logs/smart-model-router.ndjson")
 SETTINGS_PATH = os.path.expanduser("~/.claude/settings.json")
 
 
-def log(msg: str):
+# ─── Logging (NDJSON) ────────────────────────────────────────────────────────
+def log_event(event: str, **fields):
+    """Append a structured NDJSON line to the log file."""
     try:
         os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        entry = {"event": event, "ts": datetime.now().isoformat(), **fields}
         with open(LOG_PATH, "a") as f:
-            f.write(f"[{ts}] {msg}\n")
+            f.write(json.dumps(entry) + "\n")
     except Exception:
         pass
 
 
-def load_config() -> dict:
-    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
+# ─── Config loading (global + project walk-up, inspired by tzachbon) ─────────
+def load_config(cwd=None) -> dict:
+    config = {}
     search_paths = [
-        ".claude/smart-model-router.json",
-        os.path.expanduser("~/.claude/smart-model-router.json"),
+        pathlib.Path.home() / ".claude" / "smart-model-router.json",
     ]
+    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
     if plugin_root:
-        search_paths.append(os.path.join(plugin_root, "config", "smart-model-router.json"))
-    for path in search_paths:
+        search_paths.append(pathlib.Path(plugin_root) / "config" / "smart-model-router.json")
+
+    for p in search_paths:
+        if p.exists():
+            try:
+                with open(p) as f:
+                    config = json.load(f)
+            except Exception:
+                pass
+            break
+
+    # Walk up from CWD to find project-level override (inspired by tzachbon)
+    search_root = pathlib.Path(cwd) if cwd else pathlib.Path.cwd()
+    for parent in [search_root, *search_root.parents]:
+        project_cfg = parent / ".claude" / "smart-model-router.json"
+        if project_cfg.exists():
+            try:
+                with open(project_cfg) as f:
+                    proj = json.load(f)
+                for key in proj:
+                    if key == "$schema":
+                        continue
+                    if isinstance(proj[key], dict) and isinstance(config.get(key), dict):
+                        config[key] = {**config[key], **proj[key]}
+                    else:
+                        config[key] = proj[key]
+            except Exception:
+                pass
+            break
+
+    return config
+
+
+# ─── Tier keyword/pattern resolution (extend/replace, inspired by tzachbon) ──
+def resolve_list(tier_cfg: dict, field: str, defaults: list) -> list:
+    mode = tier_cfg.get("mode", "extend")
+    if mode == "replace":
+        return list(tier_cfg.get(field, []))
+    result = list(defaults)
+    result.extend(tier_cfg.get(field, []))
+    for item in tier_cfg.get(f"remove_{field}", []):
+        if item in result:
+            result.remove(item)
+    return result
+
+
+# ─── Safe regex (inspired by tzachbon) ───────────────────────────────────────
+def safe_regex_match(patterns: list, text: str) -> bool:
+    for p in patterns:
         try:
-            with open(path) as f:
-                return json.load(f)
-        except Exception:
+            if re.search(p, text):
+                return True
+        except re.error:
             pass
-    return {}
+    return False
 
 
+# ─── Helpers ─────────────────────────────────────────────────────────────────
 def find_tier_by_model(model_str: str, tiers: list) -> dict | None:
     for t in tiers:
-        model_list = t.get("models", [t["name"]])
-        if any(m.lower() in model_str.lower() for m in model_list):
+        if any(m.lower() in model_str.lower() for m in t.get("models", [t["name"]])):
             return t
     return None
 
 
-def classify(prompt_lower: str, word_count: int, has_question: bool, tiers: list) -> dict | None:
-    # Phase 1: heaviest → lightest for force signals
+def classify(prompt_lower: str, word_count: int, has_question: bool,
+             tiers: list, raw_tier_cfgs: dict) -> dict | None:
+    # Phase 1: heaviest → lightest for force/keyword signals
     for t in sorted(tiers, key=lambda x: x.get("priority", 0), reverse=True):
+        tcfg = raw_tier_cfgs.get(t["name"], {})
         if t.get("force_min_word_count") and word_count >= t["force_min_word_count"]:
             return t
         if t.get("force_question_word_count") and has_question and word_count >= t["force_question_word_count"]:
             return t
-        kws = t.get("keywords", [])
+        kws = resolve_list(tcfg, "keywords", t.get("keywords", []))
         if kws and any(kw in prompt_lower for kw in kws):
             return t
 
-    # Phase 2: lightest → heaviest for pattern + word count constraints
+    # Phase 2: lightest → heaviest for pattern + word-count constraints
     for t in sorted(tiers, key=lambda x: x.get("priority", 0)):
+        tcfg = raw_tier_cfgs.get(t["name"], {})
         max_wc = t.get("max_word_count")
         min_wc = t.get("min_word_count", 0)
         if max_wc and word_count > max_wc:
             continue
         if word_count < min_wc:
             continue
-        kws = t.get("keywords", [])
-        pats = t.get("patterns", [])
-        if (kws and any(kw in prompt_lower for kw in kws)) or \
-           (pats and any(re.search(p, prompt_lower) for p in pats)):
+        pats = resolve_list(tcfg, "patterns", t.get("patterns", []))
+        kws = resolve_list(tcfg, "keywords", t.get("keywords", []))
+        if (kws and any(kw in prompt_lower for kw in kws)) or safe_regex_match(pats, prompt_lower):
             return t
     return None
 
 
+# ─── Session mode ─────────────────────────────────────────────────────────────
 def run_session(config: dict, tiers: list):
-    """SessionStart: inject tier guidance."""
     action_mode = config.get("action", "warn")
-    default_model = config.get("default_model", "sonnet")
-
-    # Get current model
     current_model = "unknown"
     try:
         with open(SETTINGS_PATH) as f:
-            s = json.load(f)
-        current_model = s.get("model", default_model)
+            current_model = json.load(f).get("model", "sonnet")
     except Exception:
         pass
 
-    # Find current tier
     current_tier_name = current_model
     for t in sorted(tiers, key=lambda x: x.get("priority", 0)):
-        model_list = t.get("models", [t["name"]])
-        if any(m.lower() in current_model.lower() for m in model_list):
+        if any(m.lower() in current_model.lower() for m in t.get("models", [t["name"]])):
             current_tier_name = t["name"]
             break
 
@@ -178,18 +229,19 @@ Prefix any prompt with `~` to bypass classification and keep the current model.
 
 ### Customize routing
 Edit `~/.claude/smart-model-router.json` (global) or `.claude/smart-model-router.json` (project).
-Project config overrides global. Each tier supports: `keywords`, `patterns`, `max_word_count`,
-`min_word_count`, `force_min_word_count`, `force_question_word_count`.
+Project config overrides global. Tier supports: `keywords`, `patterns`, `max_word_count`,
+`min_word_count`, `force_min_word_count`, `force_question_word_count`, `mode` (extend/replace),
+`remove_keywords`, `remove_patterns`.
 Current action mode: `{action_mode}` (warn = recommend only; autoswitch = change settings.json automatically)."""
 
-    output = {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}
-    print(json.dumps(output))
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}))
 
 
+# ─── Prompt mode ──────────────────────────────────────────────────────────────
 def run_prompt(config: dict, tiers: list):
-    """UserPromptSubmit: classify and route."""
     action_mode = config.get("action", "warn")
     default_model = config.get("default_model", "sonnet")
+    raw_tier_cfgs = {t["name"]: config.get(t["name"], {}) for t in tiers}
 
     try:
         data = json.load(sys.stdin)
@@ -197,14 +249,18 @@ def run_prompt(config: dict, tiers: list):
         sys.exit(0)
 
     prompt = data.get("prompt", "")
+    conversation_id = data.get("conversation_id", "")
+
+    # Skip system/XML prompts (inspired by tzachbon)
+    if prompt.lstrip().startswith("<"):
+        sys.exit(0)
 
     # Override: "~" prefix bypasses routing
     if prompt.lstrip().startswith("~"):
-        snippet = prompt[:40].replace("\n", " ") + ("\u2026" if len(prompt) > 40 else "")
-        log(f'OVERRIDE prompt="{snippet}"')
+        log_event("recommendation", model="bypass", recommendation="bypass",
+                  action="OVERRIDE", prompt=prompt[:60], conversation_id=conversation_id)
         sys.exit(0)
 
-    # Read current model
     settings = {}
     try:
         with open(SETTINGS_PATH) as f:
@@ -212,10 +268,7 @@ def run_prompt(config: dict, tiers: list):
     except Exception:
         sys.exit(0)
 
-    current_model = settings.get("model", default_model).lower()
-    if not current_model:
-        current_model = default_model
-
+    current_model = settings.get("model", default_model).lower() or default_model
     current_tier = find_tier_by_model(current_model, tiers)
     if current_tier is None:
         sys.exit(0)
@@ -223,33 +276,35 @@ def run_prompt(config: dict, tiers: list):
     prompt_lower = prompt.lower()
     word_count = len(prompt.split())
     has_question = "?" in prompt
-    rec = classify(prompt_lower, word_count, has_question, tiers)
+    rec = classify(prompt_lower, word_count, has_question, tiers, raw_tier_cfgs)
 
     if rec is None:
-        log(f'model={current_model} rec=match action=ALLOW prompt="{prompt[:40]}"')
+        log_event("recommendation", model=current_model, recommendation="match",
+                  action="ALLOW", prompt=prompt[:60], conversation_id=conversation_id)
         sys.exit(0)
 
     rec_prio = rec.get("priority", 0)
     cur_prio = current_tier.get("priority", 0)
 
     if rec_prio == cur_prio:
-        log(f'model={current_model} rec={rec["name"]} action=ALLOW prompt="{prompt[:40]}"')
+        log_event("recommendation", model=current_model, recommendation=rec["name"],
+                  action="ALLOW", prompt=prompt[:60], conversation_id=conversation_id)
         sys.exit(0)
 
     switch_to = rec.get("switch_to", rec["name"])
-    action_label = f'{action_mode.upper()}->{switch_to}'
-    log(f'model={current_model} rec={rec["name"]} action={action_label} prompt="{prompt[:40]}"')
+    log_event("recommendation", model=current_model, recommendation=rec["name"],
+              action="BLOCK", switch_to=switch_to, prompt=prompt[:60], conversation_id=conversation_id)
 
     if action_mode == "autoswitch":
         try:
             settings["model"] = switch_to
             with open(SETTINGS_PATH, "w") as f:
                 json.dump(settings, f, indent=2)
-            msg = f"[smart-model-router] Switched {current_model} \u2192 {switch_to}  (prefix ~ to bypass)"
+            msg = f"[smart-model-router] Switched {current_model} → {switch_to}  (prefix ~ to bypass)"
         except Exception as e:
             msg = f"[smart-model-router] Could not auto-switch to {switch_to}: {e}"
     else:
-        direction = "\u2193 down" if rec_prio < cur_prio else "\u2191 up"
+        direction = "↓ down" if rec_prio < cur_prio else "↑ up"
         msg = (f"[smart-model-router] {direction} to **{rec['name']}** recommended "
                f"(current: {current_model}). "
                f"Run `/model {switch_to}` to switch, or prefix ~ to bypass.")
@@ -259,12 +314,10 @@ def run_prompt(config: dict, tiers: list):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--session", action="store_true", help="Run in SessionStart mode")
+    parser.add_argument("--session", action="store_true")
     args, _ = parser.parse_known_args()
-
     config = load_config()
     tiers = sorted(config.get("tiers", DEFAULT_TIERS), key=lambda t: t.get("priority", 0))
-
     if args.session:
         run_session(config, tiers)
     else:
