@@ -1,0 +1,23 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "smart-model-router",
+  "owner": {
+    "name": "maiha28781-cloud"
+  },
+  "metadata": {
+    "description": "Auto model-switching for Claude Code — routes prompts to the right tier to save API tokens"
+  },
+  "plugins": [
+    {
+      "name": "smart-model-router",
+      "description": "Automatically routes prompts to haiku/sonnet/opus (or any custom tier) based on task complexity. No API calls. Fully configurable via JSON.",
+      "version": "1.0.0",
+      "author": {
+        "name": "maiha28781-cloud"
+      },
+      "source": "./plugins/smart-model-router",
+      "category": "automation",
+      "tags": ["model", "routing", "hooks", "automation", "cost-optimization", "token-saving"]
+    }
+  ]
+}

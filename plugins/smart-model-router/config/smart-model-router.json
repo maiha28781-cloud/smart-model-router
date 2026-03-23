@@ -1,0 +1,76 @@
+{
+  "_comment": "smart-model-router default config. Copy to ~/.claude/smart-model-router.json to customize.",
+  "action": "warn",
+  "tiers": [
+    {
+      "name": "haiku",
+      "models": ["haiku", "claude-haiku-4.5"],
+      "switch_to": "haiku",
+      "priority": 1,
+      "description": "Simple mechanical tasks: git ops, renames, formatting, quick lookups",
+      "max_word_count": 60,
+      "keywords": [],
+      "patterns": [
+        "\\bgit\\s+(commit|push|pull|status|log|diff|add|stash|branch|merge|rebase|checkout)\\b",
+        "\\brename\\b",
+        "\\bformat\\b",
+        "\\blint\\b",
+        "\\bprettier\\b",
+        "\\beslint\\b"
+      ]
+    },
+    {
+      "name": "sonnet",
+      "models": ["sonnet", "claude-sonnet-4.6"],
+      "switch_to": "sonnet",
+      "priority": 2,
+      "description": "Standard implementation: feature work, debugging, code writing, tests",
+      "is_default": true,
+      "keywords": [],
+      "patterns": [
+        "\\bbuild\\b",
+        "\\bimplement\\b",
+        "\\bcreate\\b",
+        "\\bfix\\b",
+        "\\bdebug\\b",
+        "\\bwrite\\b",
+        "\\brefactor\\b",
+        "\\btest\\b",
+        "\\bapi\\b",
+        "\\bfunction\\b"
+      ]
+    },
+    {
+      "name": "opus",
+      "models": ["opus", "claude-opus-4.6"],
+      "switch_to": "opus",
+      "priority": 3,
+      "description": "Deep analysis: architecture decisions, complex refactors, multi-system reasoning",
+      "force_min_word_count": 200,
+      "force_question_word_count": 100,
+      "keywords": [
+        "architect",
+        "architecture",
+        "evaluate",
+        "tradeoff",
+        "strategy",
+        "redesign",
+        "analyze",
+        "analysis",
+        "plan mode",
+        "security audit"
+      ],
+      "patterns": []
+    }
+  ],
+  "_comment_custom_tier": "Add any model as a new tier. priority must be unique.",
+  "_example_custom_tier": {
+    "name": "my-model",
+    "models": ["my-model-id"],
+    "switch_to": "my-model-id",
+    "priority": 4,
+    "description": "My custom model for specialized tasks",
+    "keywords": ["ultra complex", "full codebase audit"],
+    "patterns": []
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Smart Model Router Configuration",
+  "description": "Configuration for smart-model-router. Supports any number of custom tiers beyond haiku/sonnet/opus.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "action": {
+      "type": "string",
+      "enum": ["warn", "autoswitch"],
+      "default": "warn",
+      "description": "warn: show recommendation only. autoswitch: change settings.json automatically."
+    },
+    "default_model": {
+      "type": "string",
+      "default": "sonnet",
+      "description": "Model to assume when settings.json has no 'model' field set."
+    },
+    "tiers": {
+      "type": "array",
+      "description": "List of model tiers. Add as many as you need.",
+      "items": {
+        "type": "object",
+        "required": ["name", "models", "switch_to", "priority"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "description": "Display name for this tier." },
+          "models": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Substrings to match against current model in settings.json."
+          },
+          "switch_to": { "type": "string", "description": "Value written to settings.json when autoswitching." },
+          "priority": { "type": "integer", "description": "Tier weight. Lower = lighter model. Must be unique." },
+          "description": { "type": "string" },
+          "is_default": { "type": "boolean" },
+          "keywords": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Plain-text keywords matched case-insensitively against prompt."
+          },
+          "patterns": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Regex patterns matched against prompt (Python re syntax)."
+          },
+          "max_word_count": {
+            "type": "integer",
+            "description": "Only match if prompt has fewer words than this."
+          },
+          "min_word_count": {
+            "type": "integer",
+            "description": "Only match if prompt has at least this many words."
+          },
+          "force_min_word_count": {
+            "type": "integer",
+            "description": "Force this tier if prompt exceeds this word count (no keywords needed)."
+          },
+          "force_question_word_count": {
+            "type": "integer",
+            "description": "Force this tier if prompt contains '?' and exceeds this word count."
+          }
+        }
+      }
+    }
+  }
+}
